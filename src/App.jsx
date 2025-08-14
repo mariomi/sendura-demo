@@ -18,7 +18,29 @@ function useQuery() {
   return q
 }
 
-async function loadDataset() {
+// --- Draft encoding/decoding in URL hash ---
+function encodeDraft(obj) {
+  // Compact: no spaces to keep URL shorter
+  const json = JSON.stringify(obj)
+  return btoa(unescape(encodeURIComponent(json)))
+}
+function decodeDraft(str) {
+  try {
+    const json = decodeURIComponent(escape(atob(str)))
+    return JSON.parse(json)
+  } catch (e) {
+    console.warn('Invalid draft hash', e)
+    return null
+  }
+}
+function getDraftFromHash() {
+  const h = window.location.hash || ''
+  const m = h.match(/#draft=([^&]+)/)
+  if (!m) return null
+  return decodeDraft(m[1])
+}
+
+async function loadPublishedDataset() {
   const res = await fetch('/data.json', { cache: 'no-store' })
   const js = await res.json()
   return js.items ?? []
@@ -30,7 +52,7 @@ function downloadFile(filename, text) {
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url)
 }
 function csvDownload(filename, rows) {
-  const csv = rows.map(r => r.map(v => \`"\${String(v).replaceAll('"','""')}"\`).join(',')).join('\n')
+  const csv = rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n')
   downloadFile(filename, csv)
 }
 
@@ -38,6 +60,7 @@ export default function App() {
   const params = useQuery()
   const initialView = params.get('view') === 'admin' ? 'admin' : 'client'
   const [view, setView] = useState(initialView)
+  const [previewingClient, setPreviewingClient] = useState(false) // anteprima cliente con dati correnti
   const [authed, setAuthed] = useState(false)
   const [rate, setRate] = useState(Number(params.get('rate') || 45))
   const [bufferPct, setBufferPct] = useState(Number(params.get('buffer') || 20))
@@ -46,7 +69,18 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [selectedPriority, setSelectedPriority] = useState('ALL')
 
-  useEffect(() => { loadDataset().then(setItems).finally(()=>setLoading(false)) }, [])
+  // Caricamento iniziale: se c'è un draft nell'hash lo usiamo, altrimenti dati pubblicati
+  useEffect(() => {
+    const draft = getDraftFromHash()
+    if (draft && Array.isArray(draft.items)) {
+      setItems(draft.items)
+      setLoading(false)
+      return
+    }
+    loadPublishedDataset().then(setItems).finally(()=>setLoading(false))
+  }, [])
+
+  // Se entri in admin, prova a caricare una bozza locale
   useEffect(() => {
     if (view !== 'admin') return
     const saved = localStorage.getItem('sendura_admin_overrides')
@@ -76,14 +110,36 @@ export default function App() {
     if (!val) return
     if (val === ADMIN_KEY) { setAuthed(true); alert('Accesso admin OK') } else { alert('Passcode errato') }
   }
-  function copyClientLink() {
+  function copyClientLinkPublished() {
+    // Link cliente che usa i dati pubblicati (public/data.json)
     const url = new URL(window.location.href)
     url.searchParams.set('view','client')
     url.searchParams.set('rate', String(rate))
     url.searchParams.set('buffer', String(bufferPct))
+    url.hash = ''
     navigator.clipboard.writeText(url.toString())
-    alert('Link cliente copiato negli appunti')
+    alert('Link cliente (dati pubblicati) copiato negli appunti')
   }
+  function copyClientLinkDraft() {
+    // Link cliente che incorpora la bozza nell'URL (#draft=...)
+    const url = new URL(window.location.href)
+    url.searchParams.set('view','client')
+    url.searchParams.set('rate', String(rate))
+    url.searchParams.set('buffer', String(bufferPct))
+    url.hash = 'draft=' + encodeDraft({ items })
+    navigator.clipboard.writeText(url.toString())
+    alert('Link cliente (bozza) copiato negli appunti')
+  }
+  function previewClientNow() {
+    setPreviewingClient(true)
+    setView('client')
+    alert('Anteprima cliente attiva: stai vedendo le modifiche senza pubblicarle.')
+  }
+  function exitPreview() {
+    setPreviewingClient(false)
+    setView('admin')
+  }
+
   function downloadHoursCSV() {
     const rows = [["ID","Interfaccia","Priorità","FE","BE","INTG","QA","Totale (h)"]]
     data.forEach(d => rows.push([d.id, d.name, d.priority, d.fe, d.be, d.intg, d.qa, d.total]))
@@ -103,11 +159,11 @@ export default function App() {
   }
   function saveOverridesLocal() {
     localStorage.setItem('sendura_admin_overrides', JSON.stringify(items))
-    alert('Bozza salvata (solo su questo dispositivo). Per pubblicare al cliente: scarica data.json e aggiorna su GitHub.')
+    alert('Bozza salvata (solo su questo dispositivo). Per condividerla: "Copia link cliente (bozza)". Per pubblicarla: scarica data.json e aggiorna su GitHub.')
   }
   function resetToPublished() {
     localStorage.removeItem('sendura_admin_overrides')
-    loadDataset().then(setItems)
+    loadPublishedDataset().then(setItems)
     alert('Ripristinato ai dati pubblicati (data.json)')
   }
   function downloadDataJson() { downloadFile('data.json', JSON.stringify({items}, null, 2)) }
@@ -121,7 +177,7 @@ export default function App() {
           <div style={{height:36,width:36,borderRadius:10,background:'#002F6C',color:'#fff',display:'grid',placeItems:'center',fontWeight:700}}>S</div>
           <div>
             <div style={{fontSize:22,fontWeight:600}}>SENDURA — Stime & Prospetto Interfacce</div>
-            <div className="muted">{new Date().toLocaleDateString('it-IT')} • {view==='admin'?'Vista Admin':'Vista Cliente'}</div>
+            <div className="muted">{new Date().toLocaleDateString('it-IT')} • {view==='admin'?'Vista Admin':'Vista Cliente'} {previewingClient && '(Anteprima)'}</div>
           </div>
           <span className="badge" style={{background: view==='admin' ? '#1f2937' : '#059669'}}>{view==='admin'?'Admin':'Cliente'}</span>
         </div>
@@ -130,7 +186,10 @@ export default function App() {
             <>
               {!authed && <button className="btn" onClick={handleAdminLogin}>Login admin</button>}
               {authed && <button className="btn" onClick={()=>{setAuthed(false)}}>Esci admin</button>}
-              <button className="btn" onClick={copyClientLink}>Copia link cliente</button>
+              {!previewingClient && <button className="btn" onClick={previewClientNow}>Anteprima cliente (applica modifiche)</button>}
+              {previewingClient && <button className="btn" onClick={exitPreview}>Esci anteprima</button>}
+              <button className="btn" onClick={copyClientLinkPublished}>Copia link cliente (pubblicato)</button>
+              <button className="btn" onClick={copyClientLinkDraft}>Copia link cliente (bozza)</button>
               <button className="btn" onClick={()=>window.print()}>Stampa / PDF</button>
               <button className="btn" onClick={downloadHoursCSV}>Ore (CSV)</button>
               {authed && <button className="btn primary" onClick={downloadPricingCSV}>Economica (CSV)</button>}
@@ -151,6 +210,7 @@ export default function App() {
         {view==='admin' && <a className="anchor" href="#admin">Modifica (Admin)</a>}
       </div>
 
+      {/* Filtri + Economica */}
       <div className="row row-2" style={{marginTop:12}}>
         <div className="card">
           <h3>Filtri</h3>
@@ -211,6 +271,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* KPI cards */}
       <div className="row row-4" style={{marginTop:12}}>
         <div className="kpi"><div className="label">Ore P0</div><div className="value">{totals.byP.P0}h</div></div>
         <div className="kpi"><div className="label">Ore P1</div><div className="value">{totals.byP.P1}h</div></div>
@@ -218,6 +279,7 @@ export default function App() {
         <div className="kpi"><div className="label">Totale ore</div><div className="value">{totals.grand}h</div></div>
       </div>
 
+      {/* Panoramica grafici */}
       <div id="panoramica" className="row row-2" style={{marginTop:12}}>
         <div className="card" style={{height:380}}>
           <h3>Ripartizione ore per priorità</h3>
@@ -253,6 +315,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* Dettaglio */}
       <div id="dettaglio" className="card" style={{marginTop:12}}>
         <h3>Dettaglio interfacce ({filtered.length}/{data.length})</h3>
         <div className="content">
@@ -304,6 +367,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* Economica */}
       <div id="economica" className="row row-2" style={{marginTop:12}}>
         <div className="card">
           <h3>Riepilogo ore</h3>
@@ -338,6 +402,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* Admin edit */}
       {view==='admin' && (
         <div id="admin" className="card" style={{marginTop:12}}>
           <h3>Modifica dati (Admin)</h3>
@@ -351,12 +416,12 @@ export default function App() {
                 <button className="btn primary" onClick={downloadDataJson}>Scarica <code>data.json</code> per pubblicazione</button>
               </div>
             )}
-            <p className="muted" style={{marginTop:8}}>Per rendere visibili al cliente le modifiche, sostituisci il file <code>public/data.json</code> nel repo GitHub e redeploy su Vercel.</p>
+            <p className="muted" style={{marginTop:8}}>Per condividere subito al cliente senza pubblicare: usa <b>Copia link cliente (bozza)</b>. Per rendere definitive le modifiche, sostituisci il file <code>public/data.json</code> nel repo GitHub e redeploy su Vercel.</p>
           </div>
         </div>
       )}
 
-      <p className="muted" style={{marginTop:16}}>Nota: il passcode admin è solo una barriera leggera per demo. Per protezione reale usa ambiente separato o autenticazione lato server.</p>
+      <p className="muted" style={{marginTop:16}}>Nota: il passcode admin è una barriera leggera per demo. Per protezione reale usa autenticazione lato server.</p>
     </div>
   )
 }
