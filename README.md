@@ -1,9 +1,15 @@
-# SENDURA — Demo Stime & Prospetto Interfacce (Vite + React)
+# SENDURA — Demo Admin/Cliente (Vite + React)
 
-## Avvio rapido su StackBlitz
-1. Vai su https://stackblitz.com/ e clicca **"Upload Project"**.
-2. Carica lo zip di questo progetto.
-3. StackBlitz installerà le dipendenze e avvierà la app. Se chiede lo script, usa `npm run dev` o `vite`.
+## Deploy su Vercel
+1. Metti questi file in un repo GitHub (es. `sendura-demo`).
+2. In Vercel → New Project → importa il repo.
+3. Imposta Framework **Vite**. Build `npm run build`. Output `dist`.
+4. Environment variable: `VITE_ADMIN_KEY = MettiUnPasscodeForte` (Project Settings → Environment Variables).
+5. Deploy.
+
+## Link utili
+- Vista cliente: `https://TUO-DOMINIO/?view=client&rate=45&buffer=20`
+- Vista admin: `https://TUO-DOMINIO/?view=admin` → clicca “Login admin” e inserisci `VITE_ADMIN_KEY`.
 
 ## Avvio locale
 ```bash
@@ -11,7 +17,8 @@ npm install
 npm run dev
 ```
 
-## Vista Cliente
-- Usa i parametri nell'URL per forzare la vista cliente e fissare tariffa/buffer:
-  `?view=client&rate=45&buffer=20`
-- Dalla vista interna puoi copiare il link cliente con il pulsante **"Copia link cliente"**.
+## Pubblicare modifiche ore/prezzi
+In Admin (dopo login):
+- Modifica valori nelle tabelle.
+- “Salva bozza (locale)” salva in `localStorage`.
+- “Scarica data.json” scarica i dati aggiornati → sostituisci `public/data.json` nel repo → push.
